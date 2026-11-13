@@ -97,6 +97,10 @@ public:
     virtual int         max_ext() const { return 40; }      // widest widescreen extension supported (px per side)
     virtual float       audio_gain() const { return 1.0f; } // output trim so the games play at similar loudness
     virtual uint32_t    rom_crc32() const = 0;
+    // A second dump the module also runs (0 = none), e.g. a translated release.
+    virtual uint32_t    rom_crc32_alt() const { return 0; }
+    // Which accepted dump was loaded: 0 = rom_crc32(), 1 = rom_crc32_alt().
+    virtual void        set_rom_variant(int v) { (void)v; }
     virtual uint32_t    rom_size() const = 0;
     virtual const char* rom_hint() const = 0;    // expected file description for error messages
     // Header names that mark any version of the game (RomSpec::names), to tell a wrong version from none

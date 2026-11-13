@@ -34,6 +34,9 @@ public:
     // Converts the last frame to BGRA using the current palette; applies widescreen masks. sub > 0: the frame's
     // in-between picture `sub` instead (high frame rate, see set_sub_frames).
     const uint32_t* frame(int& w, int& h, int sub = 0);
+    // Same picture, written straight into a caller's buffer (e.g. a texture) with its own
+    // row stride: one pass, no intermediate copy. Rows past the picture are left alone.
+    void frame_into(uint32_t* dst, int stride, int max_w, int& w, int& h);
     // High frame rate: the VDP draws k-1 in-between pictures with each frame (1 = none).
     void set_sub_frames(int k) { md_->vdp.sub_frames = k; }
     // Resamples the last frame's audio to `out` (48 kHz stereo int16), appending.
@@ -61,6 +64,11 @@ private:
     FrameInfo info_;
     uint32_t lut_[2048];
     std::vector<uint32_t> pixels_;
+    void convert_rows(uint32_t* dst, int stride, int w, int h, int sub);
+    static uint32_t dim_pixel(uint32_t c) {
+        // dimmed scenery: about 40% brightness
+        return 0xFF000000u | ((((c >> 16) & 0xFF) * 102 >> 8) << 16) | ((((c >> 8) & 0xFF) * 102 >> 8) << 8) | ((c & 0xFF) * 102 >> 8);
+    }
     AudioMixer mixer_;
     std::unique_ptr<MdPlus> mdplus_;
     float soundtrack_gain_ = 0.7f;

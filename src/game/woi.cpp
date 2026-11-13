@@ -1,4 +1,4 @@
-// World of Illusion Starring Mickey Mouse and Donald Duck (USA) - enhancement module.
+// World of Illusion Starring Mickey Mouse and Donald Duck (USA / Russian EU) - enhancement module.
 // Addresses and techniques: docs/re_woi_game.md, docs/re_woi_wide.md.
 #include <cstdlib>
 #include "game.h"
@@ -93,48 +93,54 @@ const std::vector<RomPatch> kInfLives = {{0x00F0EE, {0x5378, 0xFD52}, {0x4A78, 0
 // ---- widescreen (docs/re_woi_wide.md) --------------------------------------------------------------
 // Plane streaming already covers [camX-96, camX+401). The patches widen the sprite clip, object
 // despawn/spawn windows, map animations and the 2-player / auto-scroll "keep on screen" rules
-// (new code in the $FF padding at $0FFC00). Near a level edge the renderer shifts the widened view
+// (new code in the $FF padding: $0FFC00 for USA, $0FFB00 for the Russian EU dump).
+// Near a level edge the renderer shifts the widened view
 // inwards by up to E px (VDP::view_shift) instead of blacking out the outside, so the sprite clip and
 // map animations cover +-2E around the original view (sprite X past $1FF uses the 10-bit X option).
-constexpr uint32_t T_SPAWN = 0x0FFC00, T_ANIM = 0x0FFC40;
-
-std::vector<RomPatch> wide_patches(int E) {
+// `shift` moves every address to the other build (the translated EU ROM keeps its code 4 bytes earlier).
+// `t_spawn` / `t_anim` are the free bytes the new code is written to.
+std::vector<RomPatch> wide_patches(int E, int shift, uint32_t t_spawn, uint32_t t_anim) {
     const uint16_t e = (uint16_t)E;
     auto ff = [](size_t n) { return std::vector<uint16_t>(n, 0xFFFF); };
+    const uint32_t cont = (uint32_t)(0x020A7E + shift);   // the code the new spawn stub returns to
+    const uint16_t cont_hi = (uint16_t)(cont >> 16), cont_lo = (uint16_t)cont;
+    const uint16_t spawn_hi = (uint16_t)(t_spawn >> 16), spawn_lo = (uint16_t)t_spawn;
+    const uint16_t anim_hi = (uint16_t)(t_anim >> 16), anim_lo = (uint16_t)t_anim;
     std::vector<uint16_t> spawn = {0x302C, 0x0010, 0x362C, 0x0020, 0x3400, 0x9443, 0x6B0A, 0x0640, e,
                                    0x0643, e, 0x6008, 0x0440, e, 0x0443, e, 0xB143, 0x0803, 0x0007,
-                                   0x6706, 0x4EF9, 0x0002, 0x0A7E, 0x4E75};
+                                   0x6706, 0x4EF9, cont_hi, cont_lo, 0x4E75};
     std::vector<uint16_t> anim = {0x3438, 0x8510, 0x0442, (uint16_t)(2 * E), 0xE842, 0x6A02, 0x7400, 0x4E75};
     const uint16_t k = (uint16_t)(20 + (4 * E + 15) / 16);
+    auto at = [&](uint32_t a) { return (uint32_t)((int)a + shift); };
     return {
         // sprite piece clip (+-2E for the shifted view) and object despawn window. The tests are unsigned,
         // so the left bound stays at VDP X 1 or more (X 0 would also act as a sprite mask): at 2:1 pieces
         // starting left of screen x -127 are dropped (only at the very left edge, near level ends).
-        {0x00BBEC, {0x0C40, 0x0060}, {0x0C40, (uint16_t)std::max(1, 0x60 - 2 * E)}},
-        {0x00BBF2, {0x0C40, 0x01C0}, {0x0C40, (uint16_t)(0x1C0 + 2 * E)}},
-        {0x00BAB6, {0x0C44, 0x0280, 0x6400, 0x3B44, 0x4A44, 0x6B00, 0x3B3E, 0x0C43, 0x0280, 0x6400, 0x3B36, 0x4A43, 0x6B00, 0x3B30},
+        {at(0x00BBEC), {0x0C40, 0x0060}, {0x0C40, (uint16_t)std::max(1, 0x60 - 2 * E)}},
+        {at(0x00BBF2), {0x0C40, 0x01C0}, {0x0C40, (uint16_t)(0x1C0 + 2 * E)}},
+        {at(0x00BAB6), {0x0C44, 0x0280, 0x6400, 0x3B44, 0x4A44, 0x6B00, 0x3B3E, 0x0C43, 0x0280, 0x6400, 0x3B36, 0x4A43, 0x6B00, 0x3B30},
                    {0x0644, e, 0x0C44, (uint16_t)(0x280 + 2 * E), 0x6400, 0x3B40, 0x0444, e, 0x0C43, 0x0280, 0x6400, 0x3B34, 0x4E71, 0x4E71}},
         // spawning relative to the widened edges
-        {0x0209FA, {0x302C, 0x0010, 0x362C, 0x0020, 0x3400}, {0x4EF9, 0x000F, (uint16_t)T_SPAWN, 0x4E71, 0x4E71}},
-        {T_SPAWN, ff(spawn.size()), spawn},
-        {0x020A4A, {0x302C, 0x0010, 0x0240, 0xFF80, 0x3400}, {0x342C, 0x0010, 0x0442, e, 0x4E71}},
-        {0x020A60, {0x7E04}, {0x7E05}},
-        {0x020BD6, {0x0C47, 0x0280}, {0x0C47, 0x0300}},
+        {at(0x0209FA), {0x302C, 0x0010, 0x362C, 0x0020, 0x3400}, {0x4EF9, spawn_hi, spawn_lo, 0x4E71, 0x4E71}},
+        {t_spawn, ff(spawn.size()), spawn},
+        {at(0x020A4A), {0x302C, 0x0010, 0x0240, 0xFF80, 0x3400}, {0x342C, 0x0010, 0x0442, e, 0x4E71}},
+        {at(0x020A60), {0x7E04}, {0x7E05}},
+        {at(0x020BD6), {0x0C47, 0x0280}, {0x0C47, 0x0300}},
         // triggered map animations
-        {0x00ADE6, {0x3438, 0x8510, 0xE842}, {0x4EB9, 0x000F, (uint16_t)T_ANIM}},
-        {T_ANIM, ff(anim.size()), anim},
-        {0x00ADF6, {0x0642, 0x0014}, {0x0642, k}},
+        {at(0x00ADE6), {0x3438, 0x8510, 0xE842}, {0x4EB9, anim_hi, anim_lo}},
+        {t_anim, ff(anim.size()), anim},
+        {at(0x00ADF6), {0x0642, 0x0014}, {0x0642, k}},
         // 2P keep-both-on-screen rule and the W5 auto-scroll push window
-        {0x007D4A, {0x0640, 0x0010}, {0x0640, (uint16_t)(0x10 - E)}},
-        {0x007D52, {0x0640, 0x0120}, {0x0640, (uint16_t)(0x120 + 2 * E)}},
-        {0x0090B4, {0x0640, 0x0010}, {0x0640, (uint16_t)(0x10 - E)}},
-        {0x0090BC, {0x0640, 0x0128}, {0x0640, (uint16_t)(0x128 + 2 * E)}},
-        {0x0090E2, {0x0640, 0x0010}, {0x0640, (uint16_t)(0x10 - E)}},
-        {0x0090EA, {0x0640, 0x0128}, {0x0640, (uint16_t)(0x128 + 2 * E)}},
+        {at(0x007D4A), {0x0640, 0x0010}, {0x0640, (uint16_t)(0x10 - E)}},
+        {at(0x007D52), {0x0640, 0x0120}, {0x0640, (uint16_t)(0x120 + 2 * E)}},
+        {at(0x0090B4), {0x0640, 0x0010}, {0x0640, (uint16_t)(0x10 - E)}},
+        {at(0x0090BC), {0x0640, 0x0128}, {0x0640, (uint16_t)(0x128 + 2 * E)}},
+        {at(0x0090E2), {0x0640, 0x0010}, {0x0640, (uint16_t)(0x10 - E)}},
+        {at(0x0090EA), {0x0640, 0x0128}, {0x0640, (uint16_t)(0x128 + 2 * E)}},
         // W4 act 8 object that appeared at the old right edge
-        {0x01B4B8, {0x0640, 0x0140}, {0x0640, (uint16_t)(0x140 + E)}},
+        {at(0x01B4B8), {0x0640, 0x0140}, {0x0640, (uint16_t)(0x140 + E)}},
         // type 43 stays hidden until it is within camX+352 (inside the view from 2:1 on)
-        {0x0129FE, {0x0640, 0x0160}, {0x0640, (uint16_t)(0x160 + E)}},
+        {at(0x0129FE), {0x0640, 0x0160}, {0x0640, (uint16_t)(0x160 + E)}},
     };
 }
 
@@ -335,20 +341,28 @@ public:
     const char* year() const override { return "1992"; }
     int max_players() const override { return 2; }
     uint32_t rom_crc32() const override { return 0x921EBD1C; }
+    uint32_t rom_crc32_alt() const override { return 0x16DDF5CA; }   // Russian translation of the EU release
+    void set_rom_variant(int v) override { variant_ = v; }
     uint32_t rom_size() const override { return 0x100000; }
-    const char* rom_hint() const override { return "the World of Illusion (USA) ROM"; }
+    const char* rom_hint() const override { return "the World of Illusion (USA) or Russian (E) ROM"; }
     const char* rom_names() const override { return "WORLDOFILLUSION|MICKEYDONALD"; }
     uint32_t accent_color() const override { return 0xFF4FC3F7; }
     float audio_gain() const override { return 1.4f; }   // its driver mixes ~3-5 dB below COI/QS
     int max_ext() const override { return 64; }   // up to 2:1; beyond 40 the far columns are drawn from the map
 
-    static std::vector<RomPatch> patch_list(const GameConfig& cfg) {
+    std::vector<RomPatch> patch_list(const GameConfig& cfg) const {
         std::vector<RomPatch> p;
+        const int shift = variant_ ? -4 : 0;
         auto add = [&](const std::vector<RomPatch>& v) { p.insert(p.end(), v.begin(), v.end()); };
-        if (cfg.cheat("invincible")) add(kInvincible);
-        if (cfg.cheat("inf_health")) add(kInfHealth);
-        if (cfg.cheat("inf_lives")) add(kInfLives);
-        if (cfg.ext > 0) add(wide_patches(cfg.ext));
+        auto add_shifted = [&](const std::vector<RomPatch>& v) {
+            for (const RomPatch& r : v) p.push_back({(uint32_t)((int)r.addr + shift), r.orig, r.repl});
+        };
+        if (cfg.cheat("invincible")) add_shifted(kInvincible);
+        if (cfg.cheat("inf_health")) add_shifted(kInfHealth);
+        if (cfg.cheat("inf_lives")) add_shifted(kInfLives);
+        if (cfg.ext > 0) add(wide_patches(cfg.ext, shift,
+                                          variant_ ? 0x0FFB00u : 0x0FFC00u,
+                                          variant_ ? 0x0FFB80u : 0x0FFC40u));
         return p;
     }
 
@@ -653,6 +667,7 @@ public:
     }
 
 private:
+    int variant_ = 0;
     static void request(MegaDrive& md, uint8_t id) {
         for (uint16_t slot = 0x1C0A; slot <= 0x1C0C; slot++)
             if (md.zram[slot] == 0) { md.zram[slot] = id; return; }

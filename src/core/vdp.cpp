@@ -10,6 +10,23 @@
 static inline uint16_t cram_pack(uint16_t v) {
     return (uint16_t)((((v >> 9) & 7) << 6) | (((v >> 5) & 7) << 3) | ((v >> 1) & 7));
 }
+
+// One tile row expanded to line-buffer format, two pixels per VRAM byte, for the eight
+// combinations of priority (bit 7) and palette (bits 4-5) a name-table entry can select.
+namespace {
+struct RowTables {
+    uint16_t px[8][256];
+    RowTables() {
+        for (int ai = 0; ai < 8; ai++) {
+            const int attr = ((ai & 4) ? 0x80 : 0) | ((ai & 3) << 4);
+            for (int b = 0; b < 256; b++)
+                px[ai][b] = (uint16_t)((attr | (b >> 4)) | ((attr | (b & 15)) << 8));
+        }
+    }
+};
+const RowTables kRows;
+}  // namespace
+
 static inline uint16_t cram_unpack(uint16_t c) {
     return (uint16_t)((((c >> 6) & 7) << 9) | (((c >> 3) & 7) << 5) | ((c & 7) << 1));
 }
@@ -244,21 +261,20 @@ void VDP::do_dma_copy() {
 static inline void decode_row(const uint8_t* vram, uint16_t e, int r, uint8_t* row) {
     int tile = e & 0x7FF;
     if (e & 0x1000) r = 7 - r;
-    uint32_t a = (uint32_t)tile * 32 + r * 4;
-    uint8_t attr = (uint8_t)(((e & 0x8000) ? 0x80 : 0) | (((e >> 13) & 3) << 4));
+    const uint32_t a = (uint32_t)tile * 32 + (uint32_t)r * 4;
+    const uint16_t* t = kRows.px[((e & 0x8000) ? 4 : 0) | ((e >> 13) & 3)];
+    const uint16_t p0 = t[vram[a & 0xFFFF]];
+    const uint16_t p1 = t[vram[(a + 1) & 0xFFFF]];
+    const uint16_t p2 = t[vram[(a + 2) & 0xFFFF]];
+    const uint16_t p3 = t[vram[(a + 3) & 0xFFFF]];
+    uint64_t v;
     if (e & 0x800) {
-        for (int i = 0; i < 4; i++) {
-            uint8_t b = vram[(a + i) & 0xFFFF];
-            row[7 - i * 2] = attr | (b >> 4);
-            row[6 - i * 2] = attr | (b & 15);
-        }
+        auto sw = [](uint16_t p) { return (uint16_t)((p >> 8) | (p << 8)); };
+        v = (uint64_t)sw(p3) | ((uint64_t)sw(p2) << 16) | ((uint64_t)sw(p1) << 32) | ((uint64_t)sw(p0) << 48);
     } else {
-        for (int i = 0; i < 4; i++) {
-            uint8_t b = vram[(a + i) & 0xFFFF];
-            row[i * 2] = attr | (b >> 4);
-            row[i * 2 + 1] = attr | (b & 15);
-        }
+        v = (uint64_t)p0 | ((uint64_t)p1 << 16) | ((uint64_t)p2 << 32) | ((uint64_t)p3 << 48);
     }
+    memcpy(row, &v, 8);
 }
 
 void VDP::pattern_row(uint16_t entry, int row, uint8_t* out8) const { decode_row(vram, entry, row, out8); }
@@ -283,23 +299,47 @@ void VDP::render_plane(uint8_t* dst, int ln, bool plane_b, int x0, int x1) {
     int wmask = cw * 8 - 1, hmask = ch * 8 - 1;
     const int vadd = sub_ ? sub_vs_[plane_b ? 1 : 0] : 0;   // (an in-between line: part of the way back)
     int vs = (vsram[plane_b ? 1 : 0] + vadd) & 0x3FF;
-    int last_key = -1;
     uint8_t row[8] = {};
-    for (int x = x0; x < x1; x++) {
-        if (col_vs) {
+    if (col_vs) {
+        int last_key = -1;
+        for (int x = x0; x < x1; x++) {
             int col = x >> 4;
             if (col < 0) col = 0; else if (col >= ncols) col = ncols - 1;
             vs = (vsram[col * 2 + (plane_b ? 1 : 0)] + vadd) & 0x3FF;
+            int py = (ln + vs) & hmask;
+            int px = (x - hs) & wmask;
+            int cell = (py >> 3) * cw + (px >> 3);
+            int key = cell * 8 + (py & 7);
+            if (key != last_key) {
+                last_key = key;
+                decode_row(vram, vram16(nt + cell * 2), py & 7, row);
+            }
+            dst[x - x0] = row[px & 7];
         }
-        int py = (ln + vs) & hmask;
-        int px = (x - hs) & wmask;
-        int cell = (py >> 3) * cw + (px >> 3);
-        int key = cell * 8 + (py & 7);
-        if (key != last_key) {
-            last_key = key;
-            decode_row(vram, vram16(nt + cell * 2), py & 7, row);
+        return;
+    }
+    // One row of the plane: a whole tile at a time (8 pixels), the unaligned ends a pixel at a time.
+    const int py = (ln + vs) & hmask;
+    const int rowi = py & 7;
+    const int cellrow = (py >> 3) * cw;
+    int x = x0;
+    while (x < x1) {
+        const int px = (x - hs) & wmask;
+        int n = 8 - (px & 7);
+        if (n > x1 - x) n = x1 - x;
+        if (n == 8) {
+            const int cell = cellrow + (px >> 3);
+            decode_row(vram, vram16(nt + cell * 2), rowi, row);
+            memcpy(dst + (x - x0), row, 8);
+            x += 8;
+        } else {
+            for (int k = 0; k < n; k++, x++) {
+                const int p2 = (x - hs) & wmask;
+                const int cell = cellrow + (p2 >> 3);
+                decode_row(vram, vram16(nt + cell * 2), rowi, row);
+                dst[x - x0] = row[p2 & 7];
+            }
         }
-        dst[x - x0] = row[px & 7];
     }
 }
 
@@ -307,17 +347,27 @@ void VDP::render_window(uint8_t* dst, int ln, int x0, int x1) {
     int cw = h40() ? 64 : 32;
     uint32_t nt = h40() ? ((reg[3] & 0x3C) << 10) : ((reg[3] & 0x3E) << 10);
     int wmask = cw * 8 - 1;
-    int last_key = -1;
     uint8_t row[8] = {};
-    int py = ln;
-    for (int x = x0; x < x1; x++) {
-        int px = x & wmask;
-        int cell = (py >> 3) * cw + (px >> 3);
-        if (cell != last_key) {
-            last_key = cell;
+    const int py = ln;
+    const int cellrow = (py >> 3) * cw;
+    int x = x0;
+    while (x < x1) {
+        const int px = x & wmask;
+        int n = 8 - (px & 7);
+        if (n > x1 - x) n = x1 - x;
+        if (n == 8) {
+            const int cell = cellrow + (px >> 3);
             decode_row(vram, vram16(nt + cell * 2), py & 7, row);
+            memcpy(dst + (x - x0), row, 8);
+            x += 8;
+        } else {
+            for (int k = 0; k < n; k++, x++) {
+                const int p2 = x & wmask;
+                const int cell = cellrow + (p2 >> 3);
+                decode_row(vram, vram16(nt + cell * 2), py & 7, row);
+                dst[x - x0] = row[p2 & 7];
+            }
         }
-        dst[x - x0] = row[px & 7];
     }
 }
 
@@ -455,7 +505,7 @@ void VDP::render_line(int ln) {
     draw_plane_a(la, ln, -ext, W + ext, ws, we);
 
     memset(ls, 0, TW);
-    memset(spr_hud_, 0, TW);
+    if (edge_mask_l > 0 || edge_mask_r > 0) memset(spr_hud_, 0, TW);
     render_sprites(ls, ln);
 
     if (line_hook) line_hook(hook_host, ln, la, lb, ls);
@@ -486,6 +536,15 @@ void VDP::compose(uint16_t* out, const uint8_t* la, const uint8_t* lb, const uin
             uint8_t a = la[i], b = lb[i], s = ls[i];
             uint8_t pix;
             uint16_t mark = 0;
+            if ((s & 0x0F) == 0) {            // no sprite here: the usual case
+                if ((a & 0x8F) > 0x80) pix = a;
+                else if ((b & 0x8F) > 0x80) pix = b;
+                else if (a & 0x0F) pix = a;
+                else if (b & 0x0F) pix = b;
+                else { out[i] = bgc; continue; }
+                out[i] = cram[pix & 0x3F];
+                continue;
+            }
             if ((s & 0x8F) > 0x80) { pix = s; mark = spr_mark; }
             else if ((a & 0x8F) > 0x80) pix = a;
             else if ((b & 0x8F) > 0x80) pix = b;
@@ -524,10 +583,12 @@ void VDP::compose(uint16_t* out, const uint8_t* la, const uint8_t* lb, const uin
         for (int i = 0; i < 8; i++) out[ext + i] = bgc;
     }
     if (edge_mask_l > 0 || edge_mask_r > 0) {
-        for (int i = 0; i < TW; i++) {
-            if (i >= edge_mask_l && i < TW - edge_mask_r) continue;
+        const int l = std::min(edge_mask_l, TW);
+        const int r0 = std::max(l, TW - edge_mask_r);
+        for (int i = 0; i < l; i++)
             out[i] = (spr_hud_[i] && (ls[i] & 0x0F)) ? cram[ls[i] & 0x3F] : 0;
-        }
+        for (int i = r0; i < TW; i++)
+            out[i] = (spr_hud_[i] && (ls[i] & 0x0F)) ? cram[ls[i] & 0x3F] : 0;
     }
 }
 

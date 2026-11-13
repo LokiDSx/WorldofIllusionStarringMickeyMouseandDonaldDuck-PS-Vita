@@ -46,36 +46,36 @@ static_assert(std::is_trivially_copyable<State>::value, "state block must be POD
 
 uint8_t Z80::fetch_op() {
     r = uint8_t((r & 0x80) | ((r + 1) & 0x7F));
-    return read(ctx, pc++);
+    return rd(pc++);
 }
 
-uint8_t Z80::fetch8() { return read(ctx, pc++); }
+uint8_t Z80::fetch8() { return rd(pc++); }
 
 uint16_t Z80::fetch16() {
-    const uint8_t l = read(ctx, pc++);
-    const uint8_t h = read(ctx, pc++);
+    const uint8_t l = rd(pc++);
+    const uint8_t h = rd(pc++);
     return uint16_t(l | (h << 8));
 }
 
 uint16_t Z80::rd16(uint16_t a) {
-    const uint8_t l = read(ctx, a);
-    const uint8_t h = read(ctx, uint16_t(a + 1));
+    const uint8_t l = rd(a);
+    const uint8_t h = rd(uint16_t(a + 1));
     return uint16_t(l | (h << 8));
 }
 
 void Z80::wr16(uint16_t a, uint16_t v) {
-    write(ctx, a, uint8_t(v));
-    write(ctx, uint16_t(a + 1), uint8_t(v >> 8));
+    wr(a, uint8_t(v));
+    wr(uint16_t(a + 1), uint8_t(v >> 8));
 }
 
 void Z80::push(uint16_t v) {
-    write(ctx, --sp, uint8_t(v >> 8));
-    write(ctx, --sp, uint8_t(v));
+    wr(--sp, uint8_t(v >> 8));
+    wr(--sp, uint8_t(v));
 }
 
 uint16_t Z80::pop() {
-    const uint8_t l = read(ctx, sp++);
-    const uint8_t h = read(ctx, sp++);
+    const uint8_t l = rd(sp++);
+    const uint8_t h = rd(sp++);
     return uint16_t(l | (h << 8));
 }
 
@@ -256,13 +256,13 @@ int Z80::exec_main(uint8_t op, uint16_t& xy) {
     if ((op & 0xC0) == 0x40) {                          // LD r,r' / HALT
         if (op == 0x76) { halted = true; return 4; }
         // With an (IX+d) operand the other register is the real H/L.
-        if (z == 6) { const uint16_t a = ea(); r8(y, hl) = read(ctx, a); return 7 + ext; }
-        if (y == 6) { const uint16_t a = ea(); write(ctx, a, r8(z, hl)); return 7 + ext; }
+        if (z == 6) { const uint16_t a = ea(); r8(y, hl) = rd(a); return 7 + ext; }
+        if (y == 6) { const uint16_t a = ea(); wr(a, r8(z, hl)); return 7 + ext; }
         r8(y, xy) = r8(z, xy);
         return 4;
     }
     if ((op & 0xC0) == 0x80) {                          // ALU A,r
-        if (z == 6) { const uint16_t a = ea(); alu(y, read(ctx, a)); return 7 + ext; }
+        if (z == 6) { const uint16_t a = ea(); alu(y, rd(a)); return 7 + ext; }
         alu(y, r8(z, xy));
         return 4;
     }
@@ -272,13 +272,13 @@ int Z80::exec_main(uint8_t op, uint16_t& xy) {
     case 0x01: case 0x11: case 0x21: case 0x31: rp(p, xy) = fetch16(); return 10;
     case 0x02: case 0x12: {                                                 // LD (BC/DE),A
         const uint16_t a = op == 0x02 ? bc : de;
-        write(ctx, a, A);
+        wr(a, A);
         wz = uint16_t((A << 8) | ((a + 1) & 0xFF));
         return 7;
     }
     case 0x0A: case 0x1A: {                                                 // LD A,(BC/DE)
         const uint16_t a = op == 0x0A ? bc : de;
-        A = read(ctx, a);
+        A = rd(a);
         wz = uint16_t(a + 1);
         return 7;
     }
@@ -294,12 +294,12 @@ int Z80::exec_main(uint8_t op, uint16_t& xy) {
         reg = dec8(reg);
         return 4;
     }
-    case 0x34: { const uint16_t a = ea(); write(ctx, a, inc8(read(ctx, a))); return 11 + ext; }
-    case 0x35: { const uint16_t a = ea(); write(ctx, a, dec8(read(ctx, a))); return 11 + ext; }
+    case 0x34: { const uint16_t a = ea(); wr(a, inc8(rd(a))); return 11 + ext; }
+    case 0x35: { const uint16_t a = ea(); wr(a, dec8(rd(a))); return 11 + ext; }
     case 0x06: case 0x0E: case 0x16: case 0x1E: case 0x26: case 0x2E: case 0x3E:
         r8(y, xy) = fetch8();
         return 7;
-    case 0x36: { const uint16_t a = ea(); write(ctx, a, fetch8()); return idx ? 15 : 10; }
+    case 0x36: { const uint16_t a = ea(); wr(a, fetch8()); return idx ? 15 : 10; }
     case 0x07:                                                              // RLCA
         A = uint8_t((A << 1) | (A >> 7));
         F = uint8_t((F & (SF | ZF | PF)) | (A & (YF | XF | CF)));
@@ -338,11 +338,11 @@ int Z80::exec_main(uint8_t op, uint16_t& xy) {
     case 0x2A: { const uint16_t a = fetch16(); xy = rd16(a); wz = uint16_t(a + 1); return 16; }
     case 0x32: {
         const uint16_t a = fetch16();
-        write(ctx, a, A);
+        wr(a, A);
         wz = uint16_t((A << 8) | ((a + 1) & 0xFF));
         return 13;
     }
-    case 0x3A: { const uint16_t a = fetch16(); A = read(ctx, a); wz = uint16_t(a + 1); return 13; }
+    case 0x3A: { const uint16_t a = fetch16(); A = rd(a); wz = uint16_t(a + 1); return 13; }
     case 0x27: daa(); return 4;
     case 0x2F:                                                              // CPL
         A = uint8_t(~A);
@@ -405,14 +405,14 @@ int Z80::exec_cb() {
     const uint8_t op = fetch_op();
     const int y = (op >> 3) & 7, z = op & 7;
     if (z == 6) {
-        uint8_t v = read(ctx, hl);
+        uint8_t v = rd(hl);
         switch (op >> 6) {
         case 0:  v = rot(y, v); break;
         case 1:  bit(y, v, uint8_t(wz >> 8)); return 12;
         case 2:  v &= uint8_t(~(1 << y)); break;
         default: v |= uint8_t(1 << y); break;
         }
-        write(ctx, hl, v);
+        wr(hl, v);
         return 15;
     }
     uint8_t& reg = r8(z, hl);
@@ -432,14 +432,14 @@ int Z80::exec_xycb(uint16_t xy) {
     const uint16_t a = wz = uint16_t(xy + int8_t(fetch8()));
     const uint8_t op = fetch8();
     const int y = (op >> 3) & 7, z = op & 7;
-    uint8_t v = read(ctx, a);
+    uint8_t v = rd(a);
     switch (op >> 6) {
     case 0:  v = rot(y, v); break;
     case 1:  bit(y, v, uint8_t(a >> 8)); return 16;
     case 2:  v &= uint8_t(~(1 << y)); break;
     default: v |= uint8_t(1 << y); break;
     }
-    write(ctx, a, v);
+    wr(a, v);
     if (z != 6) r8(z, hl) = v;
     return 19;
 }
@@ -489,12 +489,12 @@ int Z80::exec_ed() {
             F = uint8_t((F & CF) | SZ(A) | (iff2 ? PF : 0));
             return 9;
         case 4: case 5: {                               // RRD / RLD
-            const uint8_t v = read(ctx, hl);
+            const uint8_t v = rd(hl);
             if (y == 4) {
-                write(ctx, hl, uint8_t((A << 4) | (v >> 4)));
+                wr(hl, uint8_t((A << 4) | (v >> 4)));
                 A = uint8_t((A & 0xF0) | (v & 0x0F));
             } else {
-                write(ctx, hl, uint8_t((v << 4) | (A & 0x0F)));
+                wr(hl, uint8_t((v << 4) | (A & 0x0F)));
                 A = uint8_t((A & 0xF0) | (v >> 4));
             }
             F = uint8_t((F & CF) | SZP(A));
@@ -515,8 +515,8 @@ int Z80::block(uint8_t op) {
     const bool repeat = (op & 0x10) != 0;
     switch (op & 3) {
     case 0: {                                           // LDI/LDD/LDIR/LDDR
-        const uint8_t v = read(ctx, hl);
-        write(ctx, de, v);
+        const uint8_t v = rd(hl);
+        wr(de, v);
         hl = uint16_t(hl + d);
         de = uint16_t(de + d);
         bc--;
@@ -527,7 +527,7 @@ int Z80::block(uint8_t op) {
         break;
     }
     case 1: {                                           // CPI/CPD/CPIR/CPDR
-        const uint8_t v = read(ctx, hl);
+        const uint8_t v = rd(hl);
         const uint8_t res = uint8_t(A - v);
         const uint8_t h = (A ^ v ^ res) & HF;
         // X/Y are bits 3 and 1 of A - (HL) - H.
@@ -546,11 +546,11 @@ int Z80::block(uint8_t op) {
             v = port_in(bc);
             wz = uint16_t(bc + d);
             B--;
-            write(ctx, hl, v);
+            wr(hl, v);
             hl = uint16_t(hl + d);
             k = v + uint8_t(lo(bc) + d);
         } else {
-            v = read(ctx, hl);
+            v = rd(hl);
             B--;
             wz = uint16_t(bc + d);
             port_out(bc, v);

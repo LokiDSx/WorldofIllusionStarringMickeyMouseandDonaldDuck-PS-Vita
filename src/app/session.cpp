@@ -123,31 +123,43 @@ const uint32_t* Session::frame(int& w, int& h, int sub) {
     w = v.fb_width;
     h = v.fb_lines;
     pixels_.resize((size_t)w * h);
+    convert_rows(pixels_.data(), w, w, h, sub);
+    return pixels_.data();
+}
+
+void Session::frame_into(uint32_t* dst, int stride, int max_w, int& w, int& h) {
+    const VDP& v = md_->vdp;
+    w = std::min(v.fb_width, max_w);
+    h = v.fb_lines;
+    convert_rows(dst, stride, w, h, 0);
+}
+
+void Session::convert_rows(uint32_t* dst0, int stride, int w, int h, int sub) {
+    const VDP& v = md_->vdp;
     int ml = (int)(mask_l_ + 0.5f), mr = (int)(mask_r_ + 0.5f);
-    // dimmed scenery: about 40% brightness
-    auto dim = [](uint32_t c) {
-        return 0xFF000000u | ((((c >> 16) & 0xFF) * 102 >> 8) << 16) | ((((c >> 8) & 0xFF) * 102 >> 8) << 8) | ((c & 0xFF) * 102 >> 8);
-    };
+    const int diml = dim_l_, dimr = dim_r_;
+    const int mask_lines = mask_lines_;
+    const bool pillar = pillar_below_;
+    const int ext = cfg_.ext;
     for (int y = 0; y < h; y++) {
         const uint16_t* src = sub ? v.sub_fb[sub - 1][y] : v.fb[y];
-        uint32_t* dst = &pixels_[(size_t)y * w];
+        uint32_t* dst = dst0 + (size_t)y * stride;
         for (int x = 0; x < w; x++) dst[x] = lut_[src[x] & 0x7FF];
-        if ((dim_l_ || dim_r_) && (mask_lines_ == 0 || y < mask_lines_)) {
+        if ((diml || dimr) && (mask_lines == 0 || y < mask_lines)) {
             // the scenery only: sprites there (a boss's gloves, its shots) stay as they are
-            for (int x = 0; x < dim_l_ && x < w; x++) if (!(src[x] & VDP::kSpritePixel)) dst[x] = dim(dst[x]);
-            for (int x = std::max(0, w - dim_r_); x < w; x++) if (!(src[x] & VDP::kSpritePixel)) dst[x] = dim(dst[x]);
+            for (int x = 0; x < diml && x < w; x++) if (!(src[x] & VDP::kSpritePixel)) dst[x] = dim_pixel(dst[x]);
+            for (int x = std::max(0, w - dimr); x < w; x++) if (!(src[x] & VDP::kSpritePixel)) dst[x] = dim_pixel(dst[x]);
         }
-        if (mask_lines_ > 0 && y >= mask_lines_) {
-            if (pillar_below_) {
-                for (int x = 0; x < cfg_.ext && x < w; x++) dst[x] = 0xFF000000u;
-                for (int x = std::max(0, w - cfg_.ext); x < w; x++) dst[x] = 0xFF000000u;
+        if (mask_lines > 0 && y >= mask_lines) {
+            if (pillar) {
+                for (int x = 0; x < ext && x < w; x++) dst[x] = 0xFF000000u;
+                for (int x = std::max(0, w - ext); x < w; x++) dst[x] = 0xFF000000u;
             }
             continue;
         }
         for (int x = 0; x < ml && x < w; x++) dst[x] = 0xFF000000u;
         for (int x = std::max(0, w - mr); x < w; x++) dst[x] = 0xFF000000u;
     }
-    return pixels_.data();
 }
 
 void Session::set_audio_rate(double out_rate) {

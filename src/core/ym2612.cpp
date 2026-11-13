@@ -105,6 +105,7 @@ struct State {
     uint8_t  fn_latch, sl3_latch;
     uint16_t sl3_fnum[3]; uint8_t sl3_block[3];
     uint8_t  mode, status, csm_key, dac_en, freq_dirty;
+    uint8_t  ssg_any;          // some operator has SSG-EG enabled (else update_ssg() is skipped)
     uint16_t ta_reg, ta_cnt, tb_cnt; uint8_t tb_reg, tb_sub;
     int32_t  busy, dac_out;
     uint32_t eg_cnt, eg_timer, lfo_timer;
@@ -235,7 +236,14 @@ struct YM2612::Impl {
             case 0x60: o.am = v >> 7; o.d1r = v & 0x1F; break;
             case 0x70: o.d2r = v & 0x1F; break;
             case 0x80: o.sl = v >> 4; o.rr = v & 15; break;
-            case 0x90: o.ssg = v & 15; break;
+            case 0x90:
+                o.ssg = v & 15;
+                if (v & 8) s.ssg_any = 1;
+                else if (s.ssg_any) {
+                    s.ssg_any = 0;
+                    for (Ch& c2 : s.ch) for (Op& o2 : c2.op) if (o2.ssg & 8) s.ssg_any = 1;
+                }
+                break;
             }
             return;
         }
@@ -424,7 +432,7 @@ void YM2612::generate(int32_t* out, int n) {
             for (int c = 0; c < 6; c++) if (s.freq_dirty & (1 << c)) impl->update_freq(c);
             s.freq_dirty = 0;
         }
-        for (Ch& ch : s.ch) for (Op& o : ch.op) impl->update_ssg(o);
+        if (s.ssg_any) for (Ch& ch : s.ch) for (Op& o : ch.op) impl->update_ssg(o);
         int L = 0, R = 0;
         for (int c = 0; c < 6; c++) {
             Ch& ch = s.ch[c];

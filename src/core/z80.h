@@ -17,6 +17,24 @@ public:
     InFn    in    = nullptr;   // may be null: reads return 0xFF
     OutFn   out   = nullptr;   // may be null: writes ignored
 
+    // Fast paths: 256 pages of 256 bytes. Non-null pointer = direct byte access
+    // (page base, offset = addr & 0xFF). Null = use the callback. The system
+    // points these at the sound RAM; everything else goes through the bus.
+    uint8_t* page_read[256] = {};
+    uint8_t* page_write[256] = {};
+    void clear_pages() {
+        for (int i = 0; i < 256; i++) { page_read[i] = nullptr; page_write[i] = nullptr; }
+    }
+    inline uint8_t rd(uint16_t a) const {
+        const uint8_t* p = page_read[a >> 8];
+        return p ? p[a & 0xFF] : read(ctx, a);
+    }
+    inline void wr(uint16_t a, uint8_t v) {
+        uint8_t* p = page_write[a >> 8];
+        if (p) p[a & 0xFF] = v;
+        else write(ctx, a, v);
+    }
+
     // Register file (public for debugging / save states).
     uint16_t af = 0xFFFF, bc = 0, de = 0, hl = 0;
     uint16_t af2 = 0, bc2 = 0, de2 = 0, hl2 = 0;

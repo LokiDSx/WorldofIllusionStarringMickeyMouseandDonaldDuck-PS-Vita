@@ -77,6 +77,14 @@ void MegaDrive::map_pages() {
         cpu.page_read[p] = ram;
         cpu.page_write[p] = ram_watch ? nullptr : ram;
     }
+    // The Z80 runs from its 8 KB of sound RAM (mirrored to 0x3FFF): give it the
+    // same kind of direct access so its fetches don't go through the bus.
+    z80.clear_pages();
+    for (int p = 0; p < 0x40; p++) {
+        uint8_t* base = &zram[(size_t)(p << 8) & 0x1FFF];
+        z80.page_read[p] = base;
+        z80.page_write[p] = base;
+    }
 }
 
 void MegaDrive::enable_ram_watch(bool on) {
