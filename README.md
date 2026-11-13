@@ -1,7 +1,7 @@
 # World of Illusion — PS Vita
 
-An unofficial port of **World of Illusion Starring Mickey Mouse and Donald Duck**
-(Sega Mega Drive / Genesis) for the PS Vita.
+An unofficial PS Vita port of **World of Illusion Starring Mickey Mouse and Donald Duck**
+(Sega Mega Drive / Genesis) by Loki D.S.
 
 The port uses the emulation core and enhancement module from
 [Mickey & Donald Collection](https://github.com/Darhkfox/MickeyAndDonaldCollection):
@@ -98,6 +98,7 @@ The emulation core and patches come from Mickey & Donald Collection (see
 
 ## Credits
 
+* **PS Vita port:** Loki D.S.
 * [Darhkfox / Mickey & Donald Collection](https://github.com/Darhkfox/MickeyAndDonaldCollection) —
   emulation core, widescreen patches and the enhancement module.
 * © Disney. © Sega. Unofficial fan project, not affiliated with Sega or Disney.
